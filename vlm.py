@@ -5,6 +5,7 @@ sys.executable = 'miniconda3/envs/DRL/bin/python3.10'
 sys.path = ['/home/hice1/jwessell6/DRL/VLMAgent/Gym-Snake', '/home/hice1/jwessell6/miniconda3/envs/DRL/lib/python3.10', 
     '/home/hice1/jwessell6/miniconda3/envs/DRL/lib/python3.10/site-packages', '/home/hice1/jwessell6/miniconda3/envs/DRL/lib/python3.10/lib-dynload', '/home/hice1/jwessell6/.local/bin']
 '''
+sys.path += ['Gym_Snake']
 import base64
 import numpy as np
 import torch 
@@ -16,7 +17,7 @@ import utils
 from PIL import Image
 import anthropic
 import os
-#import gym_snake
+import gym_snake
 import re
 import time
 
@@ -29,7 +30,8 @@ def run_hf(environment_name, api_key):
     eg_txt = [utils.get_example(environment_name)]
     
     if environment_name == "snake-v0":
-        env = gym.make('snake-v0')
+        grid_size = [10,10]
+        env = gym.make('snake-v0', grid_size = grid_size, unit_size = 35)
         state = env.reset()
     else:
         env = gym.make(environment_name, render_mode='rgb_array')
@@ -39,7 +41,7 @@ def run_hf(environment_name, api_key):
             state, _, _, _, _ = env.step(action)
         
     done = False
-    i = 0
+    idx = 0
     res = []
     while not done:
         if environment_name == 'snake-v0':
@@ -47,11 +49,19 @@ def run_hf(environment_name, api_key):
         else:
             image = env.render()
         im = Image.fromarray(image)
-        im.save(f"agent_outputs/{environment_name}/{i}.jpg")
-        with open(f"agent_outputs/{environment_name}/{i}.jpg", "rb") as image_file:
+        im.save(f"agent_outputs/{environment_name}/{idx}.jpg")
+        with open(f"agent_outputs/{environment_name}/{idx}.jpg", "rb") as image_file:
             enc = base64.b64encode(image_file.read()).decode('utf-8')
-            
-        curr_info = utils.get_state(environment_name, state)
+        
+        if environment_name == "LunarLander-v2":   
+            curr_info = utils.get_state(environment_name, state)
+        else:
+            for i in range(grid_size[0]):
+                for j in range(grid_size[1]):
+                    if env.controller.grid.food_space((i,j)):
+                        food = [i, j]
+                        break
+            curr_info = (grid_size, env.controller.snakes[0].head, utils.encode_snake(env.controller.snakes[0].direction), food)
         chat = utils.make_conversation(0, environment_name, [], [curr_info], ["image/jpeg"], [enc])
         try:
             message = client.messages.create(
@@ -76,10 +86,13 @@ def run_hf(environment_name, api_key):
             print(matches)
             print(string)
             continue
-        state, reward, done, trunc, _ = env.step(action)
+        if environment_name == "LunarLander-v2":
+            state, reward, done, trunc, _ = env.step(action)
+        else:
+            state, reward, done, trunc = env.step(action)
         res.append((chat[1], message.content[0].text, reward))
-        print(i)
-        i += 1
+        print(idx)
+        idx += 1
         with open(f"agent_outputs/{environment_name}/results.pkl", "wb") as file:
             pickle.dump(res,file)
     return
